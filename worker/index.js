@@ -12,33 +12,29 @@ dotenv.config();
 
 const execPromise = util.promisify(exec);
 
-// 🔥 PATHS (VERY IMPORTANT)
-const ytDlpPath = "C:\\yt-dlp\\yt-dlp.exe";
-const ffmpegPath = "C:\\ffmpeg\\ffmpeg-8.1-essentials_build\\bin";
-
 // 📁 Download folder
-const DOWNLOAD_DIR = path.resolve('../downloads');
+const DOWNLOAD_DIR = path.resolve('./downloads');
 
 // Ensure folder exists
 if (!fs.existsSync(DOWNLOAD_DIR)) {
   fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 }
 
-// ☁️ Cloudinary Config
+// ☁️ Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// 🔗 Redis Config (Upstash compatible)
+// 🔗 Redis
 const connection = new IORedis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
   tls: {}
 });
 
-// 🗄 MongoDB Connection
+// 🗄 MongoDB
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ Worker connected to MongoDB'))
   .catch(console.error);
@@ -46,69 +42,53 @@ mongoose.connect(process.env.MONGO_URI)
 // Schema
 const conversionSchema = new mongoose.Schema({
   status: String,
-  fileUrl: String,
-  metadata: {
-    title: String,
-    duration: Number,
-  }
+  fileUrl: String
 }, { strict: false });
 
 const Conversion = mongoose.model('Conversion', conversionSchema);
 
-console.log('🚀 Starting conversion worker...');
+console.log('🚀 Worker started');
 
-// 🧠 Worker Logic
+// 🧠 Worker
 const worker = new Worker('conversionQueue', async job => {
   const { conversionId, url } = job.data;
 
-  console.log(`🎯 Processing job ${job.id} for conversion ${conversionId}`);
+  console.log(`🎯 Processing job ${job.id}`);
 
   try {
-    // 1️⃣ Update status
     await Conversion.findByIdAndUpdate(conversionId, { status: 'processing' });
 
-    // 2️⃣ Output template
     const outputTemplate = path.join(DOWNLOAD_DIR, `${conversionId}.%(ext)s`);
 
-    // 3️⃣ yt-dlp command (FULLY FIXED)
-    const command = `"${ytDlpPath}" -f "ba" -x --audio-format mp3 --audio-quality 0 --ffmpeg-location "${ffmpegPath}" -o "${outputTemplate}" "${url}"`;
+    // 🔥 FIXED COMMAND (NO WINDOWS PATHS)
+    const command = `yt-dlp -f "ba" -x --audio-format mp3 --audio-quality 0 -o "${outputTemplate}" "${url}"`;
 
-    console.log(`⚙️ Executing: ${command}`);
+    console.log("Running:", command);
     await execPromise(command);
 
-    // 4️⃣ Final MP3 file path
     const finalFilePath = path.join(DOWNLOAD_DIR, `${conversionId}.mp3`);
 
     if (!fs.existsSync(finalFilePath)) {
-      throw new Error("❌ MP3 file not found after conversion");
+      throw new Error("MP3 not found");
     }
 
-    // 5️⃣ Upload to Cloudinary
-    console.log(`☁️ Uploading ${finalFilePath} to Cloudinary...`);
-
+    // Upload
     const uploadResult = await cloudinary.uploader.upload(finalFilePath, {
-      resource_type: 'video', // needed for audio
+      resource_type: 'video',
       folder: 'audioflux',
     });
 
-    // 6️⃣ Delete local file
-    try {
-      fs.unlinkSync(finalFilePath);
-      console.log("🗑️ Local file deleted");
-    } catch (err) {
-      console.warn("⚠️ File delete failed:", err);
-    }
+    fs.unlinkSync(finalFilePath);
 
-    // 7️⃣ Update DB
     await Conversion.findByIdAndUpdate(conversionId, {
       status: 'completed',
       fileUrl: uploadResult.secure_url
     });
 
-    console.log(`✅ Job ${job.id} completed successfully`);
+    console.log(`✅ Job ${job.id} done`);
 
   } catch (error) {
-    console.error(`❌ Job ${job.id} failed:`, error);
+    console.error("❌ Job failed:", error);
 
     await Conversion.findByIdAndUpdate(conversionId, {
       status: 'failed'
@@ -120,11 +100,11 @@ const worker = new Worker('conversionQueue', async job => {
   connection
 });
 
-// 📡 Events
+// Events
 worker.on('completed', job => {
-  console.log(`🎉 Job ${job.id} completed`);
+  console.log(`🎉 Completed ${job.id}`);
 });
 
 worker.on('failed', (job, err) => {
-  console.log(`💥 Job ${job.id} failed with ${err.message}`);
+  console.log(`💥 Failed ${job.id}: ${err.message}`);
 });
