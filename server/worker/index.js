@@ -1,5 +1,4 @@
 import { Worker } from 'bullmq';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { exec } from 'child_process';
 import util from 'util';
@@ -8,11 +7,14 @@ import fs from 'fs';
 import { v2 as cloudinary } from 'cloudinary';
 import IORedis from 'ioredis';
 
-dotenv.config();
+// 🔥 IMPORT EXISTING MODEL (IMPORTANT FIX)
+import Conversion from '../models/Conversion.js';
 
+dotenv.config();
+console.log("ENV CHECK:", process.env.CLOUDINARY_CLOUD_NAME);
 const execPromise = util.promisify(exec);
 
-// 🔒 Prevent multiple worker instances
+// 🔒 Prevent multiple workers
 let workerInstance = null;
 
 export const startWorker = () => {
@@ -30,29 +32,19 @@ export const startWorker = () => {
     fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
   }
 
-  // ☁️ Cloudinary
+  // ☁️ Cloudinary config
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
   });
 
-  // 🔗 Redis
+  // 🔗 Redis connection
   const connection = new IORedis(process.env.REDIS_URL, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
     tls: {}
   });
-
-  // 🗄 Reuse existing mongoose connection (DO NOT reconnect)
-  const conversionSchema = new mongoose.Schema({
-    status: String,
-    fileUrl: String
-  }, { strict: false });
-
-  const Conversion =
-    mongoose.models.Conversion ||
-    mongoose.model('Conversion', conversionSchema);
 
   // 🧠 Worker
   workerInstance = new Worker(
@@ -63,6 +55,7 @@ export const startWorker = () => {
       console.log(`🎯 Processing job ${job.id}`);
 
       try {
+        // 🔄 Update status → processing
         await Conversion.findByIdAndUpdate(conversionId, {
           status: 'processing'
         });
@@ -72,7 +65,7 @@ export const startWorker = () => {
           `${conversionId}.%(ext)s`
         );
 
-        // 🔥 yt-dlp command (Linux compatible)
+        // 🎧 yt-dlp command
         const command = `yt-dlp -f "ba" -x --audio-format mp3 --audio-quality 0 -o "${outputTemplate}" "${url}"`;
 
         console.log("⚙️ Running:", command);
@@ -87,7 +80,7 @@ export const startWorker = () => {
           throw new Error("MP3 not found after conversion");
         }
 
-        // ☁️ Upload
+        // ☁️ Upload to Cloudinary
         const uploadResult = await cloudinary.uploader.upload(
           finalFilePath,
           {
@@ -96,9 +89,10 @@ export const startWorker = () => {
           }
         );
 
-        // 🗑 Cleanup
+        // 🗑 Delete local file
         fs.unlinkSync(finalFilePath);
 
+        // ✅ Update DB
         await Conversion.findByIdAndUpdate(conversionId, {
           status: 'completed',
           fileUrl: uploadResult.secure_url
