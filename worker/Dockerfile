@@ -17,4 +17,4 @@ RUN npm install
 COPY . .
 
 # 🚀 Run WORKER (NOT index.js)
-CMD ["node", "worker.js"]
+CMD ["node", "index.js"]
