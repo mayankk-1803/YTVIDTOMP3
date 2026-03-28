@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  server:
+    build: ./server
+    ports:
+      - "5000:5000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/audioflux
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./downloads:/usr/src/app/downloads
+    depends_on:
+      - mongodb
+      - redis
+
+  worker:
+    build: ./worker
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/audioflux
+      - REDIS_URL=redis://redis:6379
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+    volumes:
+      - ./downloads:/usr/src/app/downloads
+    depends_on:
+      - mongodb
+      - redis
+
+  client:
+    build: ./client
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:5000
+
+volumes:
+  mongo-data:
