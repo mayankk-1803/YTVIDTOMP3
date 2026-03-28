@@ -6,7 +6,7 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 
 // 🔥 IMPORT WORKER
-import { startWorker } from '../worker/index.js';
+import { startWorker } from './worker/index.js';
 
 import Conversion from './models/Conversion.js';
 
